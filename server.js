@@ -43,11 +43,22 @@ function getFileExtension(filename) {
     return path.extname(filename).toLowerCase();
 }
 
-// Generate stored filename: {uuid}{ext}
-function generateStoredFilename(originalName) {
-    const uuid = generateUUID();
+// Generate stored filename: original name with conflict resolution
+function generateStoredFilename(originalName, bucket) {
     const ext = getFileExtension(originalName);
-    return uuid + ext;
+    const baseName = originalName.substring(0, originalName.length - ext.length);
+    
+    // Check if file already exists in bucket
+    const bucketDir = path.join(UPLOAD_BASE_DIR, bucket);
+    let finalName = originalName;
+    let counter = 1;
+    
+    while (fs.existsSync(path.join(bucketDir, finalName))) {
+        finalName = `${baseName} (${counter})${ext}`;
+        counter++;
+    }
+    
+    return finalName;
 }
 
 // Validate bucket name (a-zA-Z0-9-_)
@@ -634,7 +645,7 @@ app.post('/upload', requireAuthCombined, upload.array('files', MAX_FILES_PER_UPL
         // Process each file
         for (const file of req.files) {
             const fileId = generateUUID();
-            const storedName = generateStoredFilename(file.originalname);
+            const storedName = generateStoredFilename(file.originalname, bucket);
             const ext = getFileExtension(file.originalname);
             
             // Create bucket directory if it doesn't exist
