@@ -1,0 +1,17 @@
+[Unit]
+Description=Modern File Upload Server with Drag & Drop
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/uploadserver
+ExecStart=/usr/bin/node /opt/uploadserver/server.js
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
