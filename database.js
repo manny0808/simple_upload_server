@@ -222,8 +222,15 @@ class Database {
         }
         
         if (filters.user_id) {
-            whereClauses.push('user_id = ?');
-            params.push(filters.user_id);
+            if (filters.include_null_user) {
+                // Show user's files OR files with no user_id (shared/old)
+                whereClauses.push('(user_id = ? OR user_id IS NULL)');
+                params.push(filters.user_id);
+            } else {
+                // Only show user's files
+                whereClauses.push('user_id = ?');
+                params.push(filters.user_id);
+            }
         }
         
         const whereClause = whereClauses.length > 0 

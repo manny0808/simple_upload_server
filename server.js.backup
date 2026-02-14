@@ -60,18 +60,6 @@ function generateStoredFilename(originalName, directory) {
     return finalName;
 }
 
-// Get file path based on file record
-function getFilePath(file) {
-    if (file.bucket === 'user' && file.user_id) {
-        return path.join(UPLOAD_BASE_DIR, `user_${file.user_id}`, file.stored_name);
-    } else if (file.bucket === 'shared') {
-        return path.join(UPLOAD_BASE_DIR, 'shared', file.stored_name);
-    } else {
-        // Fallback: old bucket structure
-        return path.join(UPLOAD_BASE_DIR, file.bucket, file.stored_name);
-    }
-}
-
 // Validate bucket name (a-zA-Z0-9-_)
 function isValidBucket(bucket) {
     return /^[a-zA-Z0-9_-]+$/.test(bucket);
@@ -638,22 +626,34 @@ app.post('/upload', requireAuthCombined, upload.array('files', MAX_FILES_PER_UPL
             return res.status(400).json({ error: 'No files uploaded' });
         }
         
+        const bucket = req.body.bucket || 'default';
+        
+        // Validate bucket name
+        if (!isValidBucket(bucket)) {
+            // Clean up uploaded files
+            req.files.forEach(file => fs.unlinkSync(file.path));
+            return res.status(400).json({ error: 'Invalid bucket name. Use only a-zA-Z0-9-_' });
+        }
+        
         // Get user ID from session (if available)
         const userId = req.session.userId || null;
         const uploaderIp = req.ip;
         
         // Determine upload directory based on auth type
         let uploadDir;
-        let bucketType;
-        
         if (userId) {
-            // Session auth: user directory
-            uploadDir = path.join(UPLOAD_BASE_DIR, `user_${userId}`);
-            bucketType = 'user';
+            // Session auth: get user directory
+            db.getUserById(userId, (err, user) => {
+                if (err || !user) {
+                    // Clean up files if user not found
+                    req.files.forEach(file => fs.unlinkSync(file.path));
+                    return res.status(404).json({ error: 'User not found' });
+                }
+                uploadDir = getUserUploadDir(userId, user.user_folder);
+            });
         } else {
-            // Bearer token auth: shared directory
+            // Bearer token auth: use shared directory
             uploadDir = path.join(UPLOAD_BASE_DIR, 'shared');
-            bucketType = 'shared';
         }
         
         // Create upload directory if it doesn't exist
@@ -667,6 +667,7 @@ app.post('/upload', requireAuthCombined, upload.array('files', MAX_FILES_PER_UPL
         for (const file of req.files) {
             const fileId = generateUUID();
             const storedName = generateStoredFilename(file.originalname, uploadDir);
+            const ext = getFileExtension(file.originalname);
             
             // Final destination path
             const finalPath = path.join(uploadDir, storedName);
@@ -687,7 +688,7 @@ app.post('/upload', requireAuthCombined, upload.array('files', MAX_FILES_PER_UPL
             // Insert file record into database
             const fileData = {
                 id: fileId,
-                bucket: bucketType,
+                bucket: bucket,
                 original_name: file.originalname,
                 stored_name: storedName,
                 size: file.size,
@@ -710,20 +711,63 @@ app.post('/upload', requireAuthCombined, upload.array('files', MAX_FILES_PER_UPL
                 size: file.size,
                 mime: file.mimetype,
                 sha256: sha256,
-                bucket: bucketType,
+                bucket: bucket,
                 download_url: `/files/${fileId}`
             });
         }
         
-        res.json({ uploaded: uploadedFiles });
+        res.json({
+            uploaded: uploadedFiles
+        });
         
     } catch (error) {
         console.error('Upload error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        
+        // Clean up any uploaded files
+        if (req.files) {
+            req.files.forEach(file => {
+                if (fs.existsSync(file.path)) {
+                    fs.unlinkSync(file.path);
+                }
+            });
+        }
+        
+        res.status(500).json({ error: 'Upload failed', details: error.message });
     }
 });
 
-// List files endpoint (GET /files) - Project requirement
+// Download endpoint (GET /files/{id}) - Project requirement
+app.get('/files/:id', (req, res) => {
+    const fileId = req.params.id;
+    
+    // Check auth if required
+    if (REQUIRE_AUTH_FOR_DOWNLOAD) {
+        const authResult = requireAuthCombined(req, res, () => {});
+        if (authResult) return; // Auth failed
+    }
+    
+    // Get file info from database
+    db.getFileById(fileId, (err, file) => {
+        if (err || !file) {
+            return res.status(404).json({ error: 'File not found' });
+        }
+        
+        const filePath = path.join(UPLOAD_BASE_DIR, file.bucket, file.stored_name);
+        
+        if (!fs.existsSync(filePath)) {
+            return res.status(404).json({ error: 'File not found on disk' });
+        }
+        
+        // Set headers for download
+        res.setHeader('Content-Disposition', `attachment; filename="${file.original_name}"`);
+        res.setHeader('Content-Type', file.mime);
+        
+        // Send file
+        res.sendFile(filePath);
+    });
+});
+
+// Listing endpoint (GET /files) - Project requirement
 app.get('/files', requireAuthCombined, (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = Math.min(parseInt(req.query.limit) || 50, 200); // Max 200
@@ -738,10 +782,9 @@ app.get('/files', requireAuthCombined, (req, res) => {
     if (from) filters.from = from;
     if (to) filters.to = to;
     
-    // If user is logged in via session, show their files + files with no user_id (shared/old)
+    // If user is logged in via session, filter by their files
     if (req.session.userId) {
         filters.user_id = req.session.userId;
-        filters.include_null_user = true; // Also show files with user_id = NULL
     }
     
     db.getFiles(page, limit, filters, (err, result) => {
@@ -762,47 +805,6 @@ app.get('/files', requireAuthCombined, (req, res) => {
                 created_at: file.created_at
             }))
         });
-    });
-});
-
-// Download endpoint (GET /files/{id}) - Project requirement
-app.get('/files/:id', requireAuthCombined, (req, res) => {
-    const fileId = req.params.id;
-    
-    // Get file info first
-    db.getFileById(fileId, (err, file) => {
-        if (err || !file) {
-            return res.status(404).json({ error: 'File not found' });
-        }
-        
-        // Check permissions: admin token or file owner
-        let hasPermission = false;
-        
-        // Check bearer token (admin)
-        if (AUTH_TOKEN && req.headers.authorization) {
-            const token = req.headers.authorization.substring(7);
-            if (token === AUTH_TOKEN) {
-                hasPermission = true;
-            }
-        }
-        
-        // Check session user (file owner)
-        if (!hasPermission && req.session.userId && file.user_id === req.session.userId) {
-            hasPermission = true;
-        }
-        
-        if (!hasPermission) {
-            return res.status(403).json({ error: 'Permission denied' });
-        }
-        
-        const filePath = getFilePath(file);
-        
-        if (!fs.existsSync(filePath)) {
-            return res.status(404).json({ error: 'File not found on disk' });
-        }
-        
-        // Send file with original name
-        res.download(filePath, file.original_name);
     });
 });
 
@@ -840,7 +842,7 @@ app.delete('/files/:id', requireAuthCombined, (req, res) => {
             return res.status(403).json({ error: 'Permission denied' });
         }
         
-        const filePath = getFilePath(file);
+        const filePath = path.join(UPLOAD_BASE_DIR, file.bucket, file.stored_name);
         
         // Delete file from disk
         if (fs.existsSync(filePath)) {
