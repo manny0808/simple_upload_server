@@ -11,13 +11,13 @@ class Database {
     }
 
     init() {
+        // Create users table
         this.db.run(`
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL,
                 role TEXT DEFAULT 'user',
-                user_folder TEXT,
                 storage_quota_mb INTEGER DEFAULT 100,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
@@ -46,33 +46,14 @@ class Database {
             bcrypt.hash(password, 10, (err, hash) => {
                 if (err) return callback(err);
                 
-                // User folder is exactly the username
-                const userFolder = username;
-                
-                const sql = `INSERT INTO users (username, password_hash, role, user_folder, storage_quota_mb) VALUES (?, ?, ?, ?, ?)`;
-                this.db.run(sql, [username, hash, role, userFolder, storageQuotaMB], function(err) {
+                const sql = `INSERT INTO users (username, password_hash, role, storage_quota_mb) VALUES (?, ?, ?, ?)`;
+                this.db.run(sql, [username, hash, role, storageQuotaMB], function(err) {
                     if (err) return callback(err);
-                    
-                    // Create the user's directory
-                    const fs = require('fs');
-                    const path = require('path');
-                    const userDir = path.join(__dirname, 'uploads', userFolder);
-                    
-                    try {
-                        if (!fs.existsSync(userDir)) {
-                            fs.mkdirSync(userDir, { recursive: true });
-                            console.log(`✓ Created user directory: ${userDir}`);
-                        }
-                    } catch (dirErr) {
-                        console.error(`Error creating user directory: ${dirErr.message}`);
-                        // Continue anyway - directory will be created on first login
-                    }
                     
                     callback(null, { 
                         id: this.lastID, 
                         username, 
-                        role, 
-                        user_folder: userFolder,
+                        role,
                         storage_quota_mb: storageQuotaMB 
                     });
                 });
@@ -91,7 +72,7 @@ class Database {
     }
 
     getAllUsers(callback) {
-        const sql = `SELECT id, username, role, user_folder, storage_quota_mb, created_at FROM users ORDER BY id`;
+        const sql = `SELECT id, username, role, storage_quota_mb, created_at FROM users ORDER BY id`;
         this.db.all(sql, [], callback);
     }
 
@@ -101,41 +82,8 @@ class Database {
     }
 
     deleteUser(id, callback) {
-        // First get user info to find their folder
-        this.getUserById(id, (err, user) => {
-            if (err) return callback(err);
-            
-            const sql = `DELETE FROM users WHERE id = ?`;
-            this.db.run(sql, [id], (err) => {
-                if (err) return callback(err);
-                
-                // Delete user's upload directory if it exists
-                if (user && user.user_folder) {
-                    const fs = require('fs');
-                    const path = require('path');
-                    const userDir = path.join(__dirname, 'uploads', user.user_folder);
-                    
-                    try {
-                        if (fs.existsSync(userDir)) {
-                            // Remove all files in the directory first
-                            const files = fs.readdirSync(userDir);
-                            files.forEach(file => {
-                                const filePath = path.join(userDir, file);
-                                fs.unlinkSync(filePath);
-                            });
-                            // Remove the directory itself
-                            fs.rmdirSync(userDir);
-                            console.log(`✓ Deleted user directory: ${userDir}`);
-                        }
-                    } catch (dirErr) {
-                        console.error(`Error deleting user directory: ${dirErr.message}`);
-                        // Continue anyway - user is deleted from DB
-                    }
-                }
-                
-                callback(null);
-            });
-        });
+        const sql = `DELETE FROM users WHERE id = ?`;
+        this.db.run(sql, [id], callback);
     }
 
     updatePassword(id, newPassword, callback) {
@@ -156,141 +104,6 @@ class Database {
                 if (err) return callback(err);
                 callback(null, match ? user : false);
             });
-        });
-    }
-
-    // ===== FILE MANAGEMENT METHODS =====
-    
-    // Insert a new file record
-    insertFile(fileData, callback) {
-        const sql = `
-            INSERT INTO files (
-                id, bucket, original_name, stored_name, size, mime, sha256, 
-                uploader_ip, user_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `;
-        
-        const params = [
-            fileData.id,
-            fileData.bucket || 'default',
-            fileData.original_name,
-            fileData.stored_name,
-            fileData.size,
-            fileData.mime,
-            fileData.sha256 || null,
-            fileData.uploader_ip || null,
-            fileData.user_id || null
-        ];
-        
-        this.db.run(sql, params, function(err) {
-            if (err) return callback(err);
-            callback(null, { id: fileData.id, rowId: this.lastID });
-        });
-    }
-
-    // Get file by ID
-    getFileById(id, callback) {
-        const sql = `SELECT * FROM files WHERE id = ?`;
-        this.db.get(sql, [id], callback);
-    }
-
-    // Get files with pagination and filtering
-    getFiles(page = 1, limit = 50, filters = {}, callback) {
-        const offset = (page - 1) * limit;
-        let whereClauses = [];
-        let params = [];
-        
-        // Apply filters
-        if (filters.bucket) {
-            whereClauses.push('bucket = ?');
-            params.push(filters.bucket);
-        }
-        
-        if (filters.q) {
-            whereClauses.push('original_name LIKE ?');
-            params.push(`%${filters.q}%`);
-        }
-        
-        if (filters.from) {
-            whereClauses.push('created_at >= ?');
-            params.push(filters.from);
-        }
-        
-        if (filters.to) {
-            whereClauses.push('created_at <= ?');
-            params.push(filters.to);
-        }
-        
-        if (filters.user_id) {
-            if (filters.include_null_user) {
-                // Show user's files OR files with no user_id (shared/old)
-                whereClauses.push('(user_id = ? OR user_id IS NULL)');
-                params.push(filters.user_id);
-            } else {
-                // Only show user's files
-                whereClauses.push('user_id = ?');
-                params.push(filters.user_id);
-            }
-        }
-        
-        const whereClause = whereClauses.length > 0 
-            ? 'WHERE ' + whereClauses.join(' AND ')
-            : '';
-        
-        // Get total count
-        const countSql = `SELECT COUNT(*) as total FROM files ${whereClause}`;
-        this.db.get(countSql, params, (err, countResult) => {
-            if (err) return callback(err);
-            
-            // Get paginated results
-            const querySql = `
-                SELECT * FROM files 
-                ${whereClause}
-                ORDER BY created_at DESC 
-                LIMIT ? OFFSET ?
-            `;
-            
-            const queryParams = [...params, limit, offset];
-            this.db.all(querySql, queryParams, (err, rows) => {
-                if (err) return callback(err);
-                
-                callback(null, {
-                    page: parseInt(page),
-                    limit: parseInt(limit),
-                    total: countResult.total,
-                    items: rows
-                });
-            });
-        });
-    }
-
-    // Delete file by ID
-    deleteFile(id, callback) {
-        const sql = `DELETE FROM files WHERE id = ?`;
-        this.db.run(sql, [id], callback);
-    }
-
-    // Get files by user ID
-    getFilesByUserId(userId, page = 1, limit = 50, callback) {
-        const filters = { user_id: userId };
-        this.getFiles(page, limit, filters, callback);
-    }
-
-    // Get total storage used by user
-    getUserStorageUsage(userId, callback) {
-        const sql = `SELECT SUM(size) as total_size FROM files WHERE user_id = ?`;
-        this.db.get(sql, [userId], (err, result) => {
-            if (err) return callback(err);
-            callback(null, result ? result.total_size || 0 : 0);
-        });
-    }
-
-    // Check if bucket exists (for validation)
-    bucketExists(bucket, callback) {
-        const sql = `SELECT COUNT(*) as count FROM files WHERE bucket = ? LIMIT 1`;
-        this.db.get(sql, [bucket], (err, result) => {
-            if (err) return callback(err);
-            callback(null, result.count > 0);
         });
     }
 }

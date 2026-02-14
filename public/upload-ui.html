@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Upload Files - File Upload Server</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 50%, #16213e 100%);
+            min-height: 100vh;
+            font-family: 'Segoe UI', sans-serif;
+            color: #e0e0e0;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #2d2d44;
+        }
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        .logo i {
+            font-size: 2.5rem;
+            color: #10b981;
+        }
+        .logo h1 {
+            font-size: 1.8rem;
+        }
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        .btn {
+            padding: 8px 16px;
+            background: #3b82f6;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            border: none;
+            font-size: 14px;
+        }
+        .btn:hover {
+            background: #2563eb;
+        }
+        .btn-logout {
+            background: #ef4444;
+        }
+        .btn-logout:hover {
+            background: #dc2626;
+        }
+        .btn-admin {
+            background: #10b981;
+        }
+        .btn-admin:hover {
+            background: #0da271;
+        }
+        .btn-upload {
+            background: #8b5cf6;
+        }
+        .btn-upload:hover {
+            background: #7c3aed;
+        }
+        .btn-change-password {
+            background: #f59e0b;
+        }
+        .btn-change-password:hover {
+            background: #d97706;
+        }
+        .btn-back {
+            background: #6b7280;
+        }
+        .btn-back:hover {
+            background: #4b5563;
+        }
+        .btn-remove {
+            background: #ef4444;
+            padding: 4px 8px;
+            font-size: 12px;
+        }
+        .btn-remove:hover {
+            background: #dc2626;
+        }
+        .btn-primary {
+            background: #3b82f6;
+            padding: 12px 24px;
+            font-size: 16px;
+        }
+        .btn-primary:hover {
+            background: #2563eb;
+        }
+        .btn-primary:disabled {
+            background: #6b7280;
+            cursor: not-allowed;
+        }
+        .card {
+            background: #1e1e2f;
+            border: 1px solid #2d2d44;
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            margin-bottom: 25px;
+        }
+        .card-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #2d2d44;
+        }
+        .card-header i {
+            font-size: 1.5rem;
+            color: #10b981;
+        }
+        .card-header h2 {
+            font-size: 1.3rem;
+        }
+        .upload-area {
+            border: 3px dashed #2d2d44;
+            border-radius: 12px;
+            padding: 60px 40px;
+            text-align: center;
+            margin: 20px 0;
+            cursor: pointer;
+            transition: all 0.3s;
+            background: #252538;
+        }
+        .upload-area:hover, .upload-area.dragover {
+            border-color: #8b5cf6;
+            background: #2d2d44;
+        }
+        .upload-area i {
+            font-size: 4rem;
+            color: #8b5cf6;
+            margin-bottom: 15px;
+        }
+        .upload-area h3 {
+            font-size: 1.5rem;
+            margin-bottom: 10px;
+        }
+        .upload-area p {
+            color: #a1a1aa;
+            font-size: 1rem;
+        }
+        .file-list {
+            margin-top: 20px;
+        }
+        .file-item {
+            background: #252538;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border: 1px solid #2d2d44;
+        }
+        .file-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .file-icon {
+            color: #8b5cf6;
+            font-size: 1.2rem;
+        }
+        .file-name {
+            font-weight: 500;
+        }
+        .file-size {
+            color: #a1a1aa;
+            font-family: monospace;
+            font-size: 0.9rem;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background: #252538;
+            border-radius: 10px;
+            margin-top: 20px;
+            overflow: hidden;
+            border: 1px solid #2d2d44;
+        }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #10b981, #3b82f6);
+            width: 0%;
+            transition: width 0.3s;
+            border-radius: 10px;
+        }
+        .result-container {
+            margin-top: 20px;
+        }
+        .result-success {
+            background: #064e3b;
+            border: 1px solid #10b981;
+            color: #a7f3d0;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }
+        .result-error {
+            background: #7f1d1d;
+            border: 1px solid #ef4444;
+            color: #fecaca;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }
+        .uploaded-file {
+            background: #252538;
+            border: 1px solid #2d2d44;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+        }
+        .uploaded-file strong {
+            color: #10b981;
+        }
+        .uploaded-file a {
+            color: #3b82f6;
+            text-decoration: none;
+        }
+        .uploaded-file a:hover {
+            text-decoration: underline;
+        }
+        .stats-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #252538;
+            border-radius: 8px;
+            border: 1px solid #2d2d44;
+        }
+        .stat-item {
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #10b981;
+        }
+        .stat-label {
+            font-size: 0.9rem;
+            color: #a1a1aa;
+            margin-top: 5px;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid #2d2d44;
+            color: #a1a1aa;
+            font-size: 0.9rem;
+        }
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">
+                <i class="fas fa-cloud-upload-alt"></i>
+                <h1>Upload Files</h1>
+            </div>
+            <div class="user-info">
+                <span>Welcome, <strong id="username">Loading...</strong></span>
+                <a href="/" class="btn btn-back"><i class="fas fa-arrow-left"></i> Back to Dashboard</a>
+                <a href="/files" class="btn"><i class="fas fa-folder-open"></i> Browse Files</a>
+                <a href="/admin" class="btn btn-admin" id="admin-btn" style="display: none;"><i class="fas fa-cog"></i> Admin</a>
+                <a href="/logout" class="btn btn-logout"><i class="fas fa-sign-out-alt"></i> Logout</a>
+            </div>
+        </div>
+
+        <div class="stats-bar">
+            <div class="stat-item">
+                <div class="stat-value" id="storage-used">0 B</div>
+                <div class="stat-label">Storage Used</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="storage-quota">100 MB</div>
+                <div class="stat-label">Storage Quota</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="storage-percentage">0%</div>
+                <div class="stat-label">Usage</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <i class="fas fa-upload"></i>
+                <h2>Upload Area</h2>
+            </div>
+            
+            <div class="upload-area" id="dropArea">
+                <i class="fas fa-cloud-upload-alt"></i>
+                <h3>Drag & Drop files here</h3>
+                <p>or click to select files (Max 10 files per upload)</p>
+                <input type="file" id="fileInput" multiple style="display: none;">
+            </div>
+            
+            <div class="file-list" id="fileList">
+                <!-- Files will be listed here -->
+            </div>
+            
+            <div class="progress-bar hidden" id="progressBar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            
+            <button class="btn btn-primary" id="uploadBtn" disabled>
+                <i class="fas fa-upload"></i> Upload Files
+            </button>
+        </div>
+
+        <div class="result-container" id="resultContainer">
+            <!-- Results will be shown here -->
+        </div>
+
+        <div class="footer">
+            <p>File Upload Server v1.0.0 | Running on port 8080</p>
+            <p>Max file size: 100 MB per file | Max files per upload: 10</p>
+        </div>
+    </div>
+
+    <script>
+        const dropArea = document.getElementById('dropArea');
+        const fileInput = document.getElementById('fileInput');
+        const fileList = document.getElementById('fileList');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const progressBar = document.getElementById('progressBar');
+        const progressFill = document.getElementById('progressFill');
+        const resultContainer = document.getElementById('resultContainer');
+        
+        let files = [];
+        
+        // Fetch user info and storage usage
+        fetch('/api/me')
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('username').textContent = data.username;
+                
+                // Show admin link if user is admin
+                if (data.role === 'admin') {
+                    document.getElementById('admin-btn').style.display = 'inline-flex';
+                }
+                
+                // Load storage usage
+                loadStorageUsage();
+            })
+            .catch(error => {
+                console.error('Error fetching user info:', error);
+                document.getElementById('username').textContent = 'Error';
+            });
+        
+        function loadStorageUsage() {
+            fetch('/api/me/usage')
+                .then(response => response.json())
+                .then(usage => {
+                    document.getElementById('storage-used').textContent = usage.storage_used_formatted;
+                    document.getElementById('storage-quota').textContent = usage.storage_quota_formatted;
+                    document.getElementById('storage-percentage').textContent = 
+                        usage.usage_percentage.toFixed(1) + '%';
+                })
+                .catch(error => {
+                    console.error('Error loading storage usage:', error);
+                });
+        }
+        
+        // Handle drag and drop
+        dropArea.addEventListener('click', () => fileInput.click());
+        
+        dropArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropArea.classList.add('dragover');
+        });
+        
+        dropArea.addEventListener('dragleave', () => {
+            dropArea.classList.remove('dragover');
+        });
+        
+        dropArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropArea.classList.remove('dragover');
+            handleFiles(e.dataTransfer.files);
+        });
+        
+        fileInput.addEventListener('change', (e) => {
+            handleFiles(e.target.files);
+        });
+        
+        function handleFiles(newFiles) {
+            const fileArray = Array.from(newFiles);
+            files = [...files, ...fileArray];
+            updateFileList();
+            uploadBtn.disabled = files.length === 0;
+        }
+        
+        function updateFileList() {
+            fileList.innerHTML = '';
+            
+            if (files.length === 0) {
+                fileList.innerHTML = `
+                    <div style="text-align: center; padding: 20px; color: #a1a1aa;">
+                        <i class="fas fa-file" style="font-size: 2rem; margin-bottom: 10px;"></i>
+                        <p>No files selected</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            files.forEach((file, index) => {
+                const div = document.createElement('div');
+                div.className = 'file-item';
+                div.innerHTML = `
+                    <div class="file-info">
+                        <i class="fas fa-file file-icon"></i>
+                        <div>
+                            <div class="file-name">${file.name}</div>
+                            <div class="file-size">${formatFileSize(file.size)}</div>
+                        </div>
+                    </div>
+                    <button class="btn btn-remove" onclick="removeFile(${index})">
+                        <i class="fas fa-times"></i> Remove
+                    </button>
+                `;
+                fileList.appendChild(div);
+            });
+        }
+        
+        window.removeFile = function(index) {
+            files.splice(index, 1);
+            updateFileList();
+            uploadBtn.disabled = files.length === 0;
+        };
+        
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+        
+        uploadBtn.addEventListener('click', async () => {
+            if (files.length === 0) return;
+            
+            uploadBtn.disabled = true;
+            progressBar.classList.remove('hidden');
+            resultContainer.innerHTML = '';
+            
+            const formData = new FormData();
+            files.forEach(file => {
+                formData.append('files', file);
+            });
+            
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Upload failed');
+                }
+                
+                const result = await response.json();
+                showResult('success', `Successfully uploaded ${result.file_count} file(s)`);
+                
+                // Show uploaded files
+                result.files.forEach(file => {
+                    const div = document.createElement('div');
+                    div.className = 'uploaded-file';
+                    div.innerHTML = `
+                        <strong>${file.originalname}</strong><br>
+                        Size: ${formatFileSize(file.size)}<br>
+                        <a href="/download/${file.filename}" target="_blank">
+                            <i class="fas fa-download"></i> Download
+                        </a>
+                    `;
+                    resultContainer.appendChild(div);
+                });
+                
+                // Reset
+                files = [];
+                updateFileList();
+                progressFill.style.width = '0%';
+                
+                // Reload storage usage
+                loadStorageUsage();
+                
+            } catch (error) {
+                showResult('error', error.message);
+            } finally {
+                uploadBtn.disabled = false;
+                setTimeout(() => {
+                    progressBar.classList.add('hidden');
+                }, 1000);
+            }
+        });
+        
+        function showResult(type, message) {
+            const resultDiv = document.createElement('div');
+            resultDiv.className = type === 'success' ? 'result-success' : 'result-error';
+            resultDiv.innerHTML = `
+                <i class="fas ${type === 'success' ? 'fa-check-circle' : 'fa-exclamation-triangle'}"></i>
+                ${message}
+            `;
+            resultContainer.prepend(resultDiv);
+        }
+    </script>
+</body>
+</html>

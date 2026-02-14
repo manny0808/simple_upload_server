@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - File Upload Server</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 50%, #16213e 100%);
+            min-height: 100vh;
+            font-family: 'Segoe UI', sans-serif;
+            color: #e0e0e0;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #2d2d44;
+        }
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        .logo i {
+            font-size: 2.5rem;
+            color: #10b981;
+        }
+        .logo h1 {
+            font-size: 1.8rem;
+        }
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        .btn {
+            padding: 8px 16px;
+            background: #3b82f6;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            border: none;
+            font-size: 14px;
+        }
+        .btn:hover {
+            background: #2563eb;
+        }
+        .btn-logout {
+            background: #ef4444;
+        }
+        .btn-logout:hover {
+            background: #dc2626;
+        }
+        .btn-admin {
+            background: #10b981;
+        }
+        .btn-admin:hover {
+            background: #0da271;
+        }
+        .btn-upload {
+            background: #8b5cf6;
+        }
+        .btn-upload:hover {
+            background: #7c3aed;
+        }
+        .btn-change-password {
+            background: #f59e0b;
+        }
+        .btn-change-password:hover {
+            background: #d97706;
+        }
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 25px;
+            margin-bottom: 30px;
+        }
+        .card {
+            background: #1e1e2f;
+            border: 1px solid #2d2d44;
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        }
+        .card-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #2d2d44;
+        }
+        .card-header i {
+            font-size: 1.5rem;
+            color: #10b981;
+        }
+        .card-header h2 {
+            font-size: 1.3rem;
+        }
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px solid #2d2d44;
+        }
+        .status-item:last-child {
+            border-bottom: none;
+        }
+        .status-label {
+            color: #a1a1aa;
+        }
+        .status-value {
+            font-weight: 600;
+        }
+        .progress-container {
+            margin-top: 10px;
+        }
+        .progress-bar {
+            height: 8px;
+            background: #2d2d44;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #10b981, #3b82f6);
+            border-radius: 4px;
+            transition: width 0.5s ease;
+        }
+        .progress-text {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 5px;
+            font-size: 0.9rem;
+            color: #a1a1aa;
+        }
+        .quick-actions {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+        .quick-action {
+            background: #252538;
+            border: 1px solid #3d3d5c;
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+            transition: all 0.3s;
+            cursor: pointer;
+            text-decoration: none;
+            color: inherit;
+        }
+        .quick-action:hover {
+            background: #2d2d44;
+            border-color: #10b981;
+            transform: translateY(-2px);
+        }
+        .quick-action i {
+            font-size: 2rem;
+            margin-bottom: 10px;
+            color: #8b5cf6;
+        }
+        .quick-action h3 {
+            font-size: 1.1rem;
+            margin-bottom: 5px;
+        }
+        .quick-action p {
+            font-size: 0.9rem;
+            color: #a1a1aa;
+        }
+        .api-info {
+            background: #252538;
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+        .api-info h3 {
+            margin-bottom: 15px;
+            color: #10b981;
+        }
+        .endpoint {
+            background: #1e1e2f;
+            border: 1px solid #2d2d44;
+            border-radius: 6px;
+            padding: 12px;
+            margin-bottom: 10px;
+            font-family: monospace;
+            font-size: 0.9rem;
+        }
+        .endpoint .method {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            margin-right: 10px;
+            font-weight: bold;
+        }
+        .method-get { background: #10b981; color: white; }
+        .method-post { background: #3b82f6; color: white; }
+        .method-delete { background: #ef4444; color: white; }
+        .footer {
+            text-align: center;
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid #2d2d44;
+            color: #a1a1aa;
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">
+                <i class="fas fa-cloud-upload-alt"></i>
+                <h1>File Upload Server</h1>
+            </div>
+            <div class="user-info">
+                <span>Welcome, <strong id="username">Loading...</strong></span>
+                <a href="/upload-ui" class="btn btn-upload"><i class="fas fa-upload"></i> Upload</a>
+                <a href="/change-password" class="btn btn-change-password"><i class="fas fa-key"></i> Password</a>
+                <a href="/admin" class="btn btn-admin" id="admin-btn" style="display: none;"><i class="fas fa-cog"></i> Admin</a>
+                <a href="/logout" class="btn btn-logout"><i class="fas fa-sign-out-alt"></i> Logout</a>
+            </div>
+        </div>
+
+        <div class="dashboard-grid">
+            <div class="card">
+                <div class="card-header">
+                    <i class="fas fa-user-circle"></i>
+                    <h2>User Information</h2>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Username:</span>
+                    <span class="status-value" id="display-username">Loading...</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Role:</span>
+                    <span class="status-value" id="display-role">Loading...</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">User ID:</span>
+                    <span class="status-value" id="display-userid">Loading...</span>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <i class="fas fa-database"></i>
+                    <h2>Storage Usage</h2>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Used:</span>
+                    <span class="status-value" id="storage-used">Loading...</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Quota:</span>
+                    <span class="status-value" id="storage-quota">Loading...</span>
+                </div>
+                <div class="progress-container">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="storage-progress" style="width: 0%"></div>
+                    </div>
+                    <div class="progress-text">
+                        <span id="storage-percentage">0%</span>
+                        <span id="storage-remaining">100% remaining</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <i class="fas fa-bolt"></i>
+                <h2>Quick Actions</h2>
+            </div>
+            <div class="quick-actions">
+                <a href="/upload-ui" class="quick-action">
+                    <i class="fas fa-cloud-upload-alt"></i>
+                    <h3>Upload Files</h3>
+                    <p>Drag & drop interface</p>
+                </a>
+                <a href="/files" class="quick-action" id="files-link">
+                    <i class="fas fa-list"></i>
+                    <h3>Browse Files</h3>
+                    <p>View all uploaded files</p>
+                </a>
+                <a href="/admin" class="quick-action" id="admin-quick-link" style="display: none;">
+                    <i class="fas fa-cog"></i>
+                    <h3>Admin Panel</h3>
+                    <p>Manage users and settings</p>
+                </a>
+                <a href="/change-password" class="quick-action">
+                    <i class="fas fa-key"></i>
+                    <h3>Change Password</h3>
+                    <p>Update your credentials</p>
+                </a>
+            </div>
+        </div>
+
+        <div class="api-info">
+            <h3><i class="fas fa-code"></i> API Endpoints</h3>
+            <div class="endpoint">
+                <span class="method method-post">POST</span> <strong>/upload</strong> - Upload files (multipart/form-data)
+            </div>
+            <div class="endpoint">
+                <span class="method method-get">GET</span> <strong>/files</strong> - List files with pagination
+            </div>
+            <div class="endpoint">
+                <span class="method method-get">GET</span> <strong>/files/{id}</strong> - Download file by ID
+            </div>
+            <div class="endpoint">
+                <span class="method method-delete">DELETE</span> <strong>/files/{id}</strong> - Delete file by ID
+            </div>
+            <div class="endpoint">
+                <span class="method method-get">GET</span> <strong>/health</strong> - Health check endpoint
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>File Upload Server v1.0.0 | Running on port 8080</p>
+            <p>Use Bearer Token for API: <code>Authorization: Bearer &lt;TOKEN&gt;</code></p>
+        </div>
+    </div>
+
+    <script>
+        // Fetch user info
+        fetch('/api/me')
+            .then(response => response.json())
+            .then(data => {
+                // Update user info
+                document.getElementById('username').textContent = data.username;
+                document.getElementById('display-username').textContent = data.username;
+                document.getElementById('display-role').textContent = data.role;
+                document.getElementById('display-userid').textContent = data.userId;
+                
+                // Show admin links if user is admin
+                if (data.role === 'admin') {
+                    document.getElementById('admin-btn').style.display = 'inline-flex';
+                    document.getElementById('admin-quick-link').style.display = 'block';
+                }
+                
+                // Fetch storage usage
+                return fetch('/api/me/usage');
+            })
+            .then(response => response.json())
+            .then(usage => {
+                // Update storage info
+                document.getElementById('storage-used').textContent = usage.storage_used_formatted;
+                document.getElementById('storage-quota').textContent = usage.storage_quota_formatted;
+                document.getElementById('storage-percentage').textContent = `${usage.usage_percentage.toFixed(1)}%`;
+                document.getElementById('storage-remaining').textContent = `${(100 - usage.usage_percentage).toFixed(1)}% remaining`;
+                
+                // Update progress bar
+                const progressBar = document.getElementById('storage-progress');
+                progressBar.style.width = `${usage.usage_percentage}%`;
+                
+                // Color based on usage
+                if (usage.usage_percentage > 90) {
+                    progressBar.style.background = 'linear-gradient(90deg, #ef4444, #f97316)';
+                } else if (usage.usage_percentage > 70) {
+                    progressBar.style.background = 'linear-gradient(90deg, #f59e0b, #eab308)';
+                }
+            })
+            .catch(error => {
+                console.error('Error fetching user info:', error);
+                document.getElementById('username').textContent = 'Error loading';
+            });
+    </script>
+</body>
+</html>
