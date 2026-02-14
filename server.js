@@ -24,7 +24,7 @@ function getUserUploadDir(userId, userFolder) {
 
 // Session middleware
 app.use(session({
-    secret: 'upload-server-secret-' + Date.now(),
+    secret: process.env.SESSION_SECRET || 'upload-server-secret-fixed-2024',
     resave: false,
     saveUninitialized: false,
     cookie: { 
@@ -167,6 +167,83 @@ app.put('/api/users/:id/password', requireAuth, requireAdmin, (req, res) => {
     });
 });
 
+// File upload endpoint
+app.post('/api/upload', requireAuth, upload.array('file', 10), (req, res) => {
+    const userId = req.session.userId;
+    const username = req.session.username;
+    
+    // Get user info for quota check
+    db.getUserById(userId, (err, user) => {
+        if (err || !user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        
+        const userDir = getUserUploadDir(user.id, user.user_folder);
+        const quotaBytes = user.storage_quota_mb * 1024 * 1024;
+        
+        // Calculate current usage
+        let currentUsage = 0;
+        if (fs.existsSync(userDir)) {
+            const files = fs.readdirSync(userDir);
+            files.forEach(file => {
+                const filePath = path.join(userDir, file);
+                const stats = fs.statSync(filePath);
+                currentUsage += stats.size;
+            });
+        }
+        
+        // Calculate total size of new files
+        let totalNewSize = 0;
+        if (req.files && req.files.length > 0) {
+            req.files.forEach(file => {
+                totalNewSize += file.size;
+            });
+        }
+        
+        // Check quota
+        if (currentUsage + totalNewSize > quotaBytes) {
+            // Delete uploaded files if quota exceeded
+            if (req.files && req.files.length > 0) {
+                req.files.forEach(file => {
+                    fs.unlinkSync(file.path);
+                });
+            }
+            const available = quotaBytes - currentUsage;
+            return res.status(400).json({ 
+                error: `Quota exceeded. You have ${formatFileSize(available)} available, need ${formatFileSize(totalNewSize)}` 
+            });
+        }
+        
+        // Move files to user directory
+        const uploadedFiles = [];
+        if (req.files && req.files.length > 0) {
+            req.files.forEach(file => {
+                const newPath = path.join(userDir, file.originalname);
+                fs.renameSync(file.path, newPath);
+                uploadedFiles.push({
+                    originalname: file.originalname,
+                    filename: file.originalname,
+                    size: file.size
+                });
+            });
+        }
+        
+        // Calculate new usage
+        const newUsage = currentUsage + totalNewSize;
+        const usagePercentage = quotaBytes > 0 ? Math.min(100, (newUsage / quotaBytes) * 100) : 0;
+        
+        res.json({
+            success: true,
+            files: uploadedFiles,
+            total_size: totalNewSize,
+            file_count: uploadedFiles.length,
+            storage_used: newUsage,
+            storage_quota: quotaBytes,
+            usage_percentage: usagePercentage
+        });
+    });
+});
+
 // Update user quota
 app.put('/api/users/:id/quota', requireAuth, requireAdmin, (req, res) => {
     const id = parseInt(req.params.id);
@@ -280,6 +357,72 @@ app.get('/api/users/:id/usage', requireAuth, requireAdmin, (req, res) => {
     });
 });
 
+// Get current user storage usage (for user dashboard)
+app.get('/api/me/usage', requireAuth, (req, res) => {
+    const userId = req.session.userId;
+    
+    // Get user info first
+    db.getUserById(userId, (err, user) => {
+        if (err || !user) return res.status(404).json({ error: 'User not found' });
+        
+        const userDir = getUserUploadDir(user.id, user.user_folder);
+        let totalSize = 0;
+        
+        if (fs.existsSync(userDir)) {
+            const files = fs.readdirSync(userDir);
+            files.forEach(file => {
+                const filePath = path.join(userDir, file);
+                const stats = fs.statSync(filePath);
+                totalSize += stats.size;
+            });
+        }
+        
+        res.json({
+            user_id: user.id,
+            username: user.username,
+            storage_used_bytes: totalSize,
+            storage_used_formatted: formatFileSize(totalSize),
+            storage_quota_bytes: user.storage_quota_mb * 1024 * 1024,
+            storage_quota_formatted: `${user.storage_quota_mb} MB`,
+            usage_percentage: user.storage_quota_mb > 0 ? 
+                Math.min(100, (totalSize / (user.storage_quota_mb * 1024 * 1024)) * 100) : 0
+        });
+    });
+});
+
+// Get user storage usage (for admin)
+app.get('/api/users/:id/usage', requireAuth, requireAdmin, (req, res) => {
+    const id = parseInt(req.params.id);
+    
+    // Get user info first
+    db.getUserById(id, (err, user) => {
+        if (err || !user) return res.status(404).json({ error: 'User not found' });
+        
+        const userDir = getUserUploadDir(user.id, user.user_folder);
+        let totalSize = 0;
+        
+        if (fs.existsSync(userDir)) {
+            const files = fs.readdirSync(userDir);
+            files.forEach(file => {
+                const filePath = path.join(userDir, file);
+                const stats = fs.statSync(filePath);
+                totalSize += stats.size;
+            });
+        }
+        
+        res.json({
+            user_id: user.id,
+            username: user.username,
+            storage_used_bytes: totalSize,
+            storage_used_formatted: formatFileSize(totalSize),
+            storage_quota_bytes: user.storage_quota_mb * 1024 * 1024,
+            storage_quota_formatted: `${user.storage_quota_mb} MB`,
+            usage_percentage: user.storage_quota_mb > 0 ? 
+                Math.min(100, (totalSize / (user.storage_quota_mb * 1024 * 1024)) * 100) : 0
+        });
+    });
+});
+
 // Helper function to format file size
 function formatFileSize(bytes) {
     if (bytes === 0) return '0 Bytes';
@@ -288,71 +431,6 @@ function formatFileSize(bytes) {
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
-
-// Upload file with quota check - supports single and multiple files
-app.post('/api/upload', requireAuth, (req, res, next) => {
-    // Use array for multiple files, but check quota first
-    const uploadHandler = upload.array('file');
-    
-    uploadHandler(req, res, (err) => {
-        if (err) {
-            return res.status(400).json({ error: 'Upload failed: ' + err.message });
-        }
-        
-        if (!req.files || req.files.length === 0) {
-            return res.status(400).json({ error: 'No files uploaded' });
-        }
-        
-        // Check quota before accepting files
-        const userDir = getUserUploadDir(req.session.userId, req.session.userFolder);
-        let currentUsage = 0;
-        
-        if (fs.existsSync(userDir)) {
-            const files = fs.readdirSync(userDir);
-            files.forEach(file => {
-                const filePath = path.join(userDir, file);
-                const stats = fs.statSync(filePath);
-                currentUsage += stats.size;
-            });
-        }
-        
-        // Get user quota
-        db.getUserById(req.session.userId, (err, user) => {
-            if (err || !user) {
-                // Clean up uploaded files
-                req.files.forEach(file => fs.unlinkSync(file.path));
-                return res.status(500).json({ error: 'Failed to check quota' });
-            }
-            
-            const quotaBytes = user.storage_quota_mb * 1024 * 1024;
-            const totalNewSize = req.files.reduce((sum, file) => sum + file.size, 0);
-            const newTotal = currentUsage + totalNewSize;
-            
-            if (newTotal > quotaBytes) {
-                // Delete all uploaded files since they exceed quota
-                req.files.forEach(file => fs.unlinkSync(file.path));
-                return res.status(400).json({ 
-                    error: `Storage quota exceeded. You have ${formatFileSize(currentUsage)} of ${user.storage_quota_mb}MB used. Files would exceed quota by ${formatFileSize(newTotal - quotaBytes)}.`
-                });
-            }
-            
-            res.json({ 
-                success: true, 
-                files: req.files.map(file => ({
-                    originalname: file.originalname,
-                    filename: file.filename,
-                    size: file.size,
-                    mimetype: file.mimetype
-                })),
-                total_size: totalNewSize,
-                file_count: req.files.length,
-                storage_used: newTotal,
-                storage_quota: quotaBytes,
-                usage_percentage: Math.min(100, (newTotal / quotaBytes) * 100)
-            });
-        });
-    });
-});
 
 // Download file
 app.get('/download/:filename', requireAuth, (req, res) => {
