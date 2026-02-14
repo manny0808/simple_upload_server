@@ -402,6 +402,11 @@ app.get('/', requireAuth, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// Upload UI (requires login)
+app.get('/upload-ui', requireAuth, (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'upload-ui.html'));
+});
+
 // Get current user info
 app.get('/api/me', requireAuth, (req, res) => {
     res.json({
@@ -829,6 +834,9 @@ app.delete('/files/:id', requireAuthCombined, (req, res) => {
     });
 });
 
+// Static files (served after routes, before error handler)
+app.use(express.static('public'));
+
 // Error handling for file uploads
 app.use((err, req, res, next) => {
     if (err instanceof multer.MulterError) {
@@ -862,9 +870,6 @@ app.use((err, req, res, next) => {
     console.error('Server error:', err);
     res.status(500).json({ error: 'Internal server error' });
 });
-
-// Static files (after auth check in routes)
-app.use(express.static('public'));
 
 // Start server
 app.listen(PORT, () => {
