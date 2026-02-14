@@ -158,6 +158,134 @@ class Database {
             });
         });
     }
+
+    // ===== FILE MANAGEMENT METHODS =====
+    
+    // Insert a new file record
+    insertFile(fileData, callback) {
+        const sql = `
+            INSERT INTO files (
+                id, bucket, original_name, stored_name, size, mime, sha256, 
+                uploader_ip, user_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `;
+        
+        const params = [
+            fileData.id,
+            fileData.bucket || 'default',
+            fileData.original_name,
+            fileData.stored_name,
+            fileData.size,
+            fileData.mime,
+            fileData.sha256 || null,
+            fileData.uploader_ip || null,
+            fileData.user_id || null
+        ];
+        
+        this.db.run(sql, params, function(err) {
+            if (err) return callback(err);
+            callback(null, { id: fileData.id, rowId: this.lastID });
+        });
+    }
+
+    // Get file by ID
+    getFileById(id, callback) {
+        const sql = `SELECT * FROM files WHERE id = ?`;
+        this.db.get(sql, [id], callback);
+    }
+
+    // Get files with pagination and filtering
+    getFiles(page = 1, limit = 50, filters = {}, callback) {
+        const offset = (page - 1) * limit;
+        let whereClauses = [];
+        let params = [];
+        
+        // Apply filters
+        if (filters.bucket) {
+            whereClauses.push('bucket = ?');
+            params.push(filters.bucket);
+        }
+        
+        if (filters.q) {
+            whereClauses.push('original_name LIKE ?');
+            params.push(`%${filters.q}%`);
+        }
+        
+        if (filters.from) {
+            whereClauses.push('created_at >= ?');
+            params.push(filters.from);
+        }
+        
+        if (filters.to) {
+            whereClauses.push('created_at <= ?');
+            params.push(filters.to);
+        }
+        
+        if (filters.user_id) {
+            whereClauses.push('user_id = ?');
+            params.push(filters.user_id);
+        }
+        
+        const whereClause = whereClauses.length > 0 
+            ? 'WHERE ' + whereClauses.join(' AND ')
+            : '';
+        
+        // Get total count
+        const countSql = `SELECT COUNT(*) as total FROM files ${whereClause}`;
+        this.db.get(countSql, params, (err, countResult) => {
+            if (err) return callback(err);
+            
+            // Get paginated results
+            const querySql = `
+                SELECT * FROM files 
+                ${whereClause}
+                ORDER BY created_at DESC 
+                LIMIT ? OFFSET ?
+            `;
+            
+            const queryParams = [...params, limit, offset];
+            this.db.all(querySql, queryParams, (err, rows) => {
+                if (err) return callback(err);
+                
+                callback(null, {
+                    page: parseInt(page),
+                    limit: parseInt(limit),
+                    total: countResult.total,
+                    items: rows
+                });
+            });
+        });
+    }
+
+    // Delete file by ID
+    deleteFile(id, callback) {
+        const sql = `DELETE FROM files WHERE id = ?`;
+        this.db.run(sql, [id], callback);
+    }
+
+    // Get files by user ID
+    getFilesByUserId(userId, page = 1, limit = 50, callback) {
+        const filters = { user_id: userId };
+        this.getFiles(page, limit, filters, callback);
+    }
+
+    // Get total storage used by user
+    getUserStorageUsage(userId, callback) {
+        const sql = `SELECT SUM(size) as total_size FROM files WHERE user_id = ?`;
+        this.db.get(sql, [userId], (err, result) => {
+            if (err) return callback(err);
+            callback(null, result ? result.total_size || 0 : 0);
+        });
+    }
+
+    // Check if bucket exists (for validation)
+    bucketExists(bucket, callback) {
+        const sql = `SELECT COUNT(*) as count FROM files WHERE bucket = ? LIMIT 1`;
+        this.db.get(sql, [bucket], (err, result) => {
+            if (err) return callback(err);
+            callback(null, result.count > 0);
+        });
+    }
 }
 
 module.exports = new Database();

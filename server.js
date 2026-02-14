@@ -3,11 +3,22 @@ const session = require('express-session');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const db = require('./database');
 
 const app = express();
-const PORT = 8080;
-const UPLOAD_BASE_DIR = path.join(__dirname, 'uploads');
+const PORT = process.env.PORT || 8080;
+const UPLOAD_BASE_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'uploads');
+const MAX_FILE_SIZE_MB = parseInt(process.env.MAX_FILE_SIZE_MB) || 100;
+const MAX_FILES_PER_UPLOAD = parseInt(process.env.MAX_FILES_PER_UPLOAD) || 10;
+const AUTH_TOKEN = process.env.AUTH_TOKEN; // Bearer token for API auth
+const REQUIRE_AUTH_FOR_DOWNLOAD = process.env.REQUIRE_AUTH_FOR_DOWNLOAD !== 'false';
+const ENABLE_DELETE = process.env.ENABLE_DELETE !== 'false';
+
+// Parse allowed extensions from ENV
+const ALLOWED_EXTENSIONS = process.env.ALLOWED_EXTENSIONS 
+    ? process.env.ALLOWED_EXTENSIONS.split(',').map(ext => ext.trim().toLowerCase())
+    : null;
 
 // Ensure base upload directory exists
 if (!fs.existsSync(UPLOAD_BASE_DIR)) {
@@ -22,6 +33,100 @@ function getUserUploadDir(userId, userFolder) {
     return path.join(UPLOAD_BASE_DIR, userFolder);
 }
 
+// Generate UUID for file ID
+function generateUUID() {
+    return crypto.randomUUID();
+}
+
+// Get file extension from filename
+function getFileExtension(filename) {
+    return path.extname(filename).toLowerCase();
+}
+
+// Generate stored filename: {uuid}{ext}
+function generateStoredFilename(originalName) {
+    const uuid = generateUUID();
+    const ext = getFileExtension(originalName);
+    return uuid + ext;
+}
+
+// Validate bucket name (a-zA-Z0-9-_)
+function isValidBucket(bucket) {
+    return /^[a-zA-Z0-9_-]+$/.test(bucket);
+}
+
+// Validate file extension against whitelist
+function isValidExtension(filename) {
+    if (!ALLOWED_EXTENSIONS) return true; // No whitelist = all allowed
+    
+    const ext = getFileExtension(filename).substring(1); // Remove dot
+    return ALLOWED_EXTENSIONS.includes(ext);
+}
+
+// Calculate SHA256 hash of file
+function calculateSHA256(filePath) {
+    return new Promise((resolve, reject) => {
+        const hash = crypto.createHash('sha256');
+        const stream = fs.createReadStream(filePath);
+        
+        stream.on('data', data => hash.update(data));
+        stream.on('end', () => resolve(hash.digest('hex')));
+        stream.on('error', reject);
+    });
+}
+
+// Format file size helper
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+// Bearer token authentication middleware
+function requireBearerToken(req, res, next) {
+    const authHeader = req.headers.authorization;
+    
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Authentication required' });
+    }
+    
+    const token = authHeader.substring(7);
+    
+    if (token !== AUTH_TOKEN) {
+        return res.status(403).json({ error: 'Invalid token' });
+    }
+    
+    next();
+}
+
+// Combined auth: either session OR bearer token
+function requireAuthCombined(req, res, next) {
+    // Check session auth first
+    if (req.session.userId) {
+        return next();
+    }
+    
+    // Check bearer token
+    if (AUTH_TOKEN) {
+        const authHeader = req.headers.authorization;
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+            const token = authHeader.substring(7);
+            if (token === AUTH_TOKEN) {
+                return next();
+            }
+        }
+    }
+    
+    // No valid auth found
+    if (req.path.startsWith('/api/') || req.path.startsWith('/files/')) {
+        return res.status(401).json({ error: 'Authentication required' });
+    } else {
+        res.redirect('/login');
+    }
+}
+
 // Session middleware
 app.use(session({
     secret: process.env.SESSION_SECRET || 'upload-server-secret-fixed-2024',
@@ -32,6 +137,37 @@ app.use(session({
         maxAge: 24 * 60 * 60 * 1000 // 24 hours
     }
 }));
+
+// Configure multer for file uploads
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        // Temporary directory for uploads before validation
+        const tempDir = path.join(__dirname, 'temp');
+        if (!fs.existsSync(tempDir)) {
+            fs.mkdirSync(tempDir, { recursive: true });
+        }
+        cb(null, tempDir);
+    },
+    filename: (req, file, cb) => {
+        // Store with original name temporarily
+        cb(null, file.originalname);
+    }
+});
+
+const upload = multer({
+    storage: storage,
+    limits: {
+        fileSize: MAX_FILE_SIZE_MB * 1024 * 1024,
+        files: MAX_FILES_PER_UPLOAD
+    },
+    fileFilter: (req, file, cb) => {
+        // Check file extension against whitelist
+        if (!isValidExtension(file.originalname)) {
+            return cb(new Error(`File type not allowed: ${file.originalname}`));
+        }
+        cb(null, true);
+    }
+});
 
 // Body parsers
 app.use(express.json());
@@ -55,8 +191,8 @@ function requireAdmin(req, res, next) {
     }
 }
 
-// Configure multer for file uploads
-const storage = multer.diskStorage({
+// Configure multer for file uploads (existing routes)
+const userStorage = multer.diskStorage({
     destination: (req, file, cb) => {
         const userDir = getUserUploadDir(req.session.userId, req.session.userFolder);
         if (!fs.existsSync(userDir)) {
@@ -69,8 +205,8 @@ const storage = multer.diskStorage({
     }
 });
 
-const upload = multer({ 
-    storage: storage,
+const userUpload = multer({ 
+    storage: userStorage,
     limits: { fileSize: 100 * 1024 * 1024 }
 });
 
@@ -168,7 +304,7 @@ app.put('/api/users/:id/password', requireAuth, requireAdmin, (req, res) => {
 });
 
 // File upload endpoint
-app.post('/api/upload', requireAuth, upload.array('file', 10), (req, res) => {
+app.post('/api/upload', requireAuth, userUpload.array('file', 10), (req, res) => {
     const userId = req.session.userId;
     const username = req.session.username;
     
@@ -456,6 +592,277 @@ app.delete('/api/files/:filename', requireAuth, (req, res) => {
     });
 });
 
+// ===== PROJECT REQUIREMENT ENDPOINTS =====
+
+// Health endpoint (GET /health)
+app.get('/health', (req, res) => {
+    res.json({ 
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        service: 'upload-server',
+        version: '1.0.0'
+    });
+});
+
+// Upload endpoint (POST /upload) - Project requirement
+app.post('/upload', requireAuthCombined, upload.array('files', MAX_FILES_PER_UPLOAD), async (req, res) => {
+    try {
+        if (!req.files || req.files.length === 0) {
+            return res.status(400).json({ error: 'No files uploaded' });
+        }
+        
+        const bucket = req.body.bucket || 'default';
+        
+        // Validate bucket name
+        if (!isValidBucket(bucket)) {
+            // Clean up uploaded files
+            req.files.forEach(file => fs.unlinkSync(file.path));
+            return res.status(400).json({ error: 'Invalid bucket name. Use only a-zA-Z0-9-_' });
+        }
+        
+        // Get user ID from session (if available)
+        const userId = req.session.userId || null;
+        const uploaderIp = req.ip;
+        
+        const uploadedFiles = [];
+        
+        // Process each file
+        for (const file of req.files) {
+            const fileId = generateUUID();
+            const storedName = generateStoredFilename(file.originalname);
+            const ext = getFileExtension(file.originalname);
+            
+            // Create bucket directory if it doesn't exist
+            const bucketDir = path.join(UPLOAD_BASE_DIR, bucket);
+            if (!fs.existsSync(bucketDir)) {
+                fs.mkdirSync(bucketDir, { recursive: true });
+            }
+            
+            // Final destination path
+            const finalPath = path.join(bucketDir, storedName);
+            
+            // Move file from temp to final location
+            fs.renameSync(file.path, finalPath);
+            
+            // Calculate SHA256 hash if requested
+            let sha256 = null;
+            if (req.body.calculate_hash === 'true') {
+                try {
+                    sha256 = await calculateSHA256(finalPath);
+                } catch (hashErr) {
+                    console.error('Failed to calculate SHA256:', hashErr);
+                }
+            }
+            
+            // Insert file record into database
+            const fileData = {
+                id: fileId,
+                bucket: bucket,
+                original_name: file.originalname,
+                stored_name: storedName,
+                size: file.size,
+                mime: file.mimetype,
+                sha256: sha256,
+                uploader_ip: uploaderIp,
+                user_id: userId
+            };
+            
+            db.insertFile(fileData, (err) => {
+                if (err) {
+                    console.error('Failed to insert file record:', err);
+                }
+            });
+            
+            uploadedFiles.push({
+                id: fileId,
+                original_name: file.originalname,
+                stored_name: storedName,
+                size: file.size,
+                mime: file.mimetype,
+                sha256: sha256,
+                bucket: bucket,
+                download_url: `/files/${fileId}`
+            });
+        }
+        
+        res.json({
+            uploaded: uploadedFiles
+        });
+        
+    } catch (error) {
+        console.error('Upload error:', error);
+        
+        // Clean up any uploaded files
+        if (req.files) {
+            req.files.forEach(file => {
+                if (fs.existsSync(file.path)) {
+                    fs.unlinkSync(file.path);
+                }
+            });
+        }
+        
+        res.status(500).json({ error: 'Upload failed', details: error.message });
+    }
+});
+
+// Download endpoint (GET /files/{id}) - Project requirement
+app.get('/files/:id', (req, res) => {
+    const fileId = req.params.id;
+    
+    // Check auth if required
+    if (REQUIRE_AUTH_FOR_DOWNLOAD) {
+        const authResult = requireAuthCombined(req, res, () => {});
+        if (authResult) return; // Auth failed
+    }
+    
+    // Get file info from database
+    db.getFileById(fileId, (err, file) => {
+        if (err || !file) {
+            return res.status(404).json({ error: 'File not found' });
+        }
+        
+        const filePath = path.join(UPLOAD_BASE_DIR, file.bucket, file.stored_name);
+        
+        if (!fs.existsSync(filePath)) {
+            return res.status(404).json({ error: 'File not found on disk' });
+        }
+        
+        // Set headers for download
+        res.setHeader('Content-Disposition', `attachment; filename="${file.original_name}"`);
+        res.setHeader('Content-Type', file.mime);
+        
+        // Send file
+        res.sendFile(filePath);
+    });
+});
+
+// Listing endpoint (GET /files) - Project requirement
+app.get('/files', requireAuthCombined, (req, res) => {
+    const page = parseInt(req.query.page) || 1;
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200); // Max 200
+    const q = req.query.q || null;
+    const bucket = req.query.bucket || null;
+    const from = req.query.from || null;
+    const to = req.query.to || null;
+    
+    const filters = {};
+    if (q) filters.q = q;
+    if (bucket) filters.bucket = bucket;
+    if (from) filters.from = from;
+    if (to) filters.to = to;
+    
+    // If user is logged in via session, filter by their files
+    if (req.session.userId) {
+        filters.user_id = req.session.userId;
+    }
+    
+    db.getFiles(page, limit, filters, (err, result) => {
+        if (err) {
+            return res.status(500).json({ error: 'Failed to fetch files' });
+        }
+        
+        res.json({
+            page: result.page,
+            limit: result.limit,
+            total: result.total,
+            items: result.items.map(file => ({
+                id: file.id,
+                original_name: file.original_name,
+                size: file.size,
+                mime: file.mime,
+                bucket: file.bucket,
+                created_at: file.created_at
+            }))
+        });
+    });
+});
+
+// Delete endpoint (DELETE /files/{id}) - Project requirement
+app.delete('/files/:id', requireAuthCombined, (req, res) => {
+    if (!ENABLE_DELETE) {
+        return res.status(403).json({ error: 'Delete functionality is disabled' });
+    }
+    
+    const fileId = req.params.id;
+    
+    // Get file info first
+    db.getFileById(fileId, (err, file) => {
+        if (err || !file) {
+            return res.status(404).json({ error: 'File not found' });
+        }
+        
+        // Check permissions: admin token or file owner
+        let hasPermission = false;
+        
+        // Check bearer token (admin)
+        if (AUTH_TOKEN && req.headers.authorization) {
+            const token = req.headers.authorization.substring(7);
+            if (token === AUTH_TOKEN) {
+                hasPermission = true;
+            }
+        }
+        
+        // Check session user (file owner)
+        if (!hasPermission && req.session.userId && file.user_id === req.session.userId) {
+            hasPermission = true;
+        }
+        
+        if (!hasPermission) {
+            return res.status(403).json({ error: 'Permission denied' });
+        }
+        
+        const filePath = path.join(UPLOAD_BASE_DIR, file.bucket, file.stored_name);
+        
+        // Delete file from disk
+        if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+        }
+        
+        // Delete record from database
+        db.deleteFile(fileId, (err) => {
+            if (err) {
+                return res.status(500).json({ error: 'Failed to delete file record' });
+            }
+            
+            res.status(204).send();
+        });
+    });
+});
+
+// Error handling for file uploads
+app.use((err, req, res, next) => {
+    if (err instanceof multer.MulterError) {
+        // Multer errors
+        if (err.code === 'LIMIT_FILE_SIZE') {
+            return res.status(413).json({ 
+                error: `File too large. Maximum size is ${MAX_FILE_SIZE_MB}MB` 
+            });
+        }
+        if (err.code === 'LIMIT_FILE_COUNT') {
+            return res.status(400).json({ 
+                error: `Too many files. Maximum is ${MAX_FILES_PER_UPLOAD} files per upload` 
+            });
+        }
+        if (err.code === 'LIMIT_UNEXPECTED_FILE') {
+            return res.status(400).json({ 
+                error: 'Unexpected file field. Use "files" field for uploads' 
+            });
+        }
+        return res.status(400).json({ error: 'Upload error: ' + err.message });
+    }
+    
+    // Other errors
+    if (err.message && err.message.includes('File type not allowed')) {
+        return res.status(415).json({ 
+            error: 'File type not allowed',
+            allowed_extensions: ALLOWED_EXTENSIONS 
+        });
+    }
+    
+    console.error('Server error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+});
+
 // Static files (after auth check in routes)
 app.use(express.static('public'));
 
@@ -465,4 +872,11 @@ app.listen(PORT, () => {
     console.log(`📁 Upload base directory: ${UPLOAD_BASE_DIR}`);
     console.log(`🔐 Login: http://[IP]:${PORT}/login`);
     console.log(`👤 Default admin: admin/manni`);
+    console.log(`🔧 Project API endpoints:`);
+    console.log(`   POST /upload (multipart/form-data)`);
+    console.log(`   GET  /files (pagination, filtering)`);
+    console.log(`   GET  /files/{id} (download)`);
+    console.log(`   DELETE /files/{id} (delete)`);
+    console.log(`   GET  /health (health check)`);
+    console.log(`🔐 Auth: Session (web) OR Bearer Token (API: ${AUTH_TOKEN ? 'SET' : 'NOT SET'})`);
 });

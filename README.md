@@ -1,192 +1,256 @@
-# Modern File Upload Server
+# Simple Upload Server
 
-A secure, modern file upload server with drag & drop interface, user management, and isolated user folders.
+A minimal but robust file upload server with Web UI and REST API. Supports both session-based authentication (web) and Bearer token authentication (API).
 
 ## Features
 
-- ✅ **Modern UI** - Dark theme with green accents, responsive design
-- ✅ **Drag & Drop** - HTML5 file upload with progress bars
-- ✅ **User Management** - Admin panel for creating/managing users
-- ✅ **Password Security** - bcrypt hashing, password change functionality
-- ✅ **File Isolation** - Each user gets their own folder
-- ✅ **Session-based Auth** - Secure login/logout
-- ✅ **Admin Panel** - Full user management interface
-- ✅ **Systemd Service** - Auto-start on boot
+- ✅ **Web UI**: Drag & drop upload, progress tracking, file management
+- ✅ **REST API**: Standardized endpoints for programmatic access
+- ✅ **Dual Auth**: Session (web) + Bearer Token (API)
+- ✅ **File Management**: Upload, list, download, delete
+- ✅ **Security**: File type validation, size limits, path traversal protection
+- ✅ **Storage**: SQLite for metadata + filesystem for files
+- ✅ **User Management**: Multi-user with roles (admin/user) and quotas
 
 ## Quick Start
 
 ### 1. Installation
 ```bash
 # Clone repository
-git clone https://github.com/manny0808/modern-file-upload-server.git
-cd modern-file-upload-server
+git clone <your-repo>
+cd simple_upload_server
 
 # Install dependencies
 npm install
 
-# Create uploads directory
-mkdir -p uploads
+# Configure (copy and edit .env)
+cp .env.example .env
+# Edit .env with your settings
 ```
 
-### 2. Configuration
+### 2. Start Server
 ```bash
-# Copy systemd service file
-sudo cp systemd/modern-file-upload.service /etc/systemd/system/
+# Development
+npm start
 
-# Edit service file if needed
-sudo nano /etc/systemd/system/modern-file-upload.service
+# Production (with PM2)
+npm install -g pm2
+pm2 start server.js --name upload-server
 ```
 
-### 3. Start Server
+### 3. Access Web UI
+- Open: `http://localhost:8080`
+- Default admin: `admin` / `manni`
+
+## API Reference
+
+### Authentication
+- **Web UI**: Session-based (login form)
+- **API**: Bearer Token (`Authorization: Bearer <TOKEN>`)
+
+### Endpoints
+
+#### 1. Upload Files
 ```bash
-# Start service
-sudo systemctl start modern-file-upload.service
+POST /upload
+Content-Type: multipart/form-data
+Authorization: Bearer <TOKEN>
 
-# Enable auto-start
-sudo systemctl enable modern-file-upload.service
+# Parameters:
+# - files: File(s) to upload (array)
+# - bucket: Optional bucket name (default: "default")
+# - calculate_hash: "true" to compute SHA256 (optional)
 
-# Check status
-sudo systemctl status modern-file-upload.service
+# Response:
+{
+  "uploaded": [
+    {
+      "id": "uuid",
+      "original_name": "file.pdf",
+      "stored_name": "uuid.pdf",
+      "size": 12345,
+      "mime": "application/pdf",
+      "sha256": "abc123...",
+      "bucket": "default",
+      "download_url": "/files/uuid"
+    }
+  ]
+}
 ```
 
-## Default Credentials
+#### 2. List Files
+```bash
+GET /files
+Authorization: Bearer <TOKEN>
 
-On first run, a default admin user is created:
-- **Username:** `admin`
-- **Password:** `manni`
+# Query parameters:
+# - page: Page number (default: 1)
+# - limit: Items per page (max: 200, default: 50)
+# - q: Search in filename
+# - bucket: Filter by bucket
+# - from/to: Date range (ISO format)
 
-**⚠️ Security Note:** Change the password immediately after first login!
+# Response:
+{
+  "page": 1,
+  "limit": 50,
+  "total": 123,
+  "items": [
+    {
+      "id": "uuid",
+      "original_name": "file.pdf",
+      "size": 12345,
+      "mime": "application/pdf",
+      "bucket": "default",
+      "created_at": "2026-02-14T10:00:00Z"
+    }
+  ]
+}
+```
 
-## Access URLs
+#### 3. Download File
+```bash
+GET /files/{id}
+# Auth optional (configurable via REQUIRE_AUTH_FOR_DOWNLOAD)
 
-- **Login:** `http://your-server:8080/login`
-- **Main App:** `http://your-server:8080/`
-- **Admin Panel:** `http://your-server:8080/admin` (admin role required)
+# Response: File binary with headers:
+# - Content-Disposition: attachment; filename="original_name"
+# - Content-Type: mime_type
+```
 
-## User Management
+#### 4. Delete File
+```bash
+DELETE /files/{id}
+Authorization: Bearer <TOKEN>
 
-### Admin Features
-1. **Create Users** - Add new users with role (admin/user)
-2. **Delete Users** - Remove users (cannot delete yourself)
-3. **View All Users** - See all registered users
-4. **Change Passwords** - Reset user passwords
+# Response: 204 No Content
+```
 
-### User Features
-1. **Change Own Password** - Self-service password change
-2. **File Upload** - Drag & drop interface
-3. **File Management** - View, download, delete files
-4. **Isolated Storage** - Each user has private folder
+#### 5. Health Check
+```bash
+GET /health
 
-## File Structure
+# Response:
+{
+  "status": "ok",
+  "timestamp": "2026-02-14T10:00:00Z",
+  "service": "upload-server",
+  "version": "1.0.0"
+}
+```
+
+## Configuration (Environment Variables)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | 8080 | Server port |
+| `UPLOAD_DIR` | ./uploads | Base upload directory |
+| `DB_PATH` | ./users.db | SQLite database path |
+| `AUTH_TOKEN` | (required) | Bearer token for API auth |
+| `SESSION_SECRET` | (required) | Secret for session encryption |
+| `MAX_FILE_SIZE_MB` | 100 | Maximum file size in MB |
+| `MAX_FILES_PER_UPLOAD` | 10 | Maximum files per request |
+| `ALLOWED_EXTENSIONS` | (all) | Comma-separated list of allowed extensions |
+| `REQUIRE_AUTH_FOR_DOWNLOAD` | true | Require auth for downloads |
+| `ENABLE_DELETE` | true | Enable delete functionality |
+
+## Example Usage
+
+### Upload with curl
+```bash
+# Single file
+curl -X POST http://localhost:8080/upload \
+  -H "Authorization: Bearer your-token" \
+  -F "files=@/path/to/file.pdf"
+
+# Multiple files
+curl -X POST http://localhost:8080/upload \
+  -H "Authorization: Bearer your-token" \
+  -F "files=@file1.pdf" \
+  -F "files=@file2.jpg"
+
+# With bucket and hash calculation
+curl -X POST http://localhost:8080/upload \
+  -H "Authorization: Bearer your-token" \
+  -F "files=@file.pdf" \
+  -F "bucket=documents" \
+  -F "calculate_hash=true"
+```
+
+### List files
+```bash
+curl -X GET "http://localhost:8080/files?page=1&limit=10&bucket=documents" \
+  -H "Authorization: Bearer your-token"
+```
+
+### Download file
+```bash
+curl -X GET http://localhost:8080/files/{uuid} \
+  -H "Authorization: Bearer your-token" \
+  -o downloaded_file.pdf
+```
+
+## File Storage Structure
 
 ```
-/opt/uploadserver/
-├── server.js              # Main server file
-├── database.js           # SQLite database wrapper
-├── package.json          # Dependencies
-├── uploads/              # Base upload directory
-│   ├── user_123_admin/   # Admin user folder
-│   └── user_456_user1/   # Regular user folder
-├── public/               # Static files (CSS, JS)
-├── views/                # HTML templates
-│   ├── login.html       # Login page
-│   └── admin.html       # Admin panel
-└── users.db             # SQLite database
+uploads/
+├── default/           # Default bucket
+│   ├── uuid1.pdf     # Stored with UUID filename
+│   └── uuid2.jpg
+├── documents/        # Custom bucket
+│   └── uuid3.docx
+└── images/          # Another bucket
+    └── uuid4.png
 ```
+
+## Database Schema
+
+### `users` table
+- `id` INTEGER PRIMARY KEY
+- `username` TEXT UNIQUE
+- `password_hash` TEXT
+- `role` TEXT (admin/user)
+- `user_folder` TEXT
+- `storage_quota_mb` INTEGER
+- `created_at` DATETIME
+
+### `files` table
+- `id` TEXT PRIMARY KEY (UUID)
+- `bucket` TEXT
+- `original_name` TEXT
+- `stored_name` TEXT ({uuid}{ext})
+- `size` INTEGER
+- `mime` TEXT
+- `sha256` TEXT (optional)
+- `created_at` DATETIME
+- `uploader_ip` TEXT
+- `user_id` INTEGER (foreign key to users)
 
 ## Security Features
 
-- **bcrypt Password Hashing** - Secure password storage
-- **Session Management** - Express-session with cookies
-- **User Isolation** - Files separated by user
-- **Role-based Access** - Admin vs user permissions
-- **Input Validation** - Server-side validation
-- **XSS Protection** - Built-in Express security
+1. **Path Traversal Protection**: Never trust user-provided paths
+2. **File Type Validation**: Optional extension/MIME whitelist
+3. **Size Limits**: Configurable per-file and per-request limits
+4. **Authentication**: Dual auth system (session + token)
+5. **Input Sanitization**: Bucket name validation (a-zA-Z0-9-_)
+6. **Error Handling**: Clean error responses without sensitive info
 
-## API Endpoints
+## Development
 
-### Authentication
-- `POST /login` - User login
-- `GET /logout` - User logout
-- `GET /api/me` - Get current user info
-- `POST /api/change-password` - Change own password
-
-### File Management
-- `GET /api/files` - List user's files
-- `POST /api/upload` - Upload file
-- `GET /download/:filename` - Download file
-- `DELETE /api/files/:filename` - Delete file
-
-### Admin (admin role required)
-- `GET /api/users` - List all users
-- `POST /api/users` - Create user
-- `DELETE /api/users/:id` - Delete user
-- `PUT /api/users/:id/password` - Reset user password
-
-## System Requirements
-
-- **Node.js:** 14.x or higher
-- **npm:** 6.x or higher
-- **SQLite3:** Built-in (no separate installation)
-- **Storage:** Depends on upload needs
-- **Memory:** 50MB+ for basic operation
-
-## Deployment
-
-### Manual Deployment
 ```bash
-# 1. Install Node.js
-sudo apt update
-sudo apt install nodejs npm
-
-# 2. Clone and setup
-sudo mkdir -p /opt/uploadserver
-sudo chown -R $USER:$USER /opt/uploadserver
-cd /opt/uploadserver
-git clone https://github.com/manny0808/modern-file-upload-server.git .
-
-# 3. Install and start
+# Install dependencies
 npm install
-sudo systemctl start modern-file-upload.service
+
+# Run tests (if available)
+npm test
+
+# Run with nodemon for development
+npm run dev
+
+# Check code style
+npm run lint
 ```
-
-### Docker (Coming Soon)
-```bash
-docker run -p 8080:8080 -v ./uploads:/app/uploads manny0808/upload-server
-```
-
-## Troubleshooting
-
-### Server won't start
-```bash
-# Check logs
-sudo journalctl -u modern-file-upload.service -f
-
-# Check port 8080
-sudo netstat -tulpn | grep :8080
-```
-
-### Login issues
-1. Check if users.db exists
-2. Verify database schema
-3. Check bcrypt compatibility
-
-### File upload issues
-1. Verify uploads directory permissions
-2. Check disk space
-3. Verify file size limits
 
 ## License
 
-MIT License - See LICENSE file for details.
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
-
-## Support
-
-For issues and feature requests, please use the GitHub Issues page.
+MIT
