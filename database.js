@@ -101,8 +101,41 @@ class Database {
     }
 
     deleteUser(id, callback) {
-        const sql = `DELETE FROM users WHERE id = ?`;
-        this.db.run(sql, [id], callback);
+        // First get user info to find their folder
+        this.getUserById(id, (err, user) => {
+            if (err) return callback(err);
+            
+            const sql = `DELETE FROM users WHERE id = ?`;
+            this.db.run(sql, [id], (err) => {
+                if (err) return callback(err);
+                
+                // Delete user's upload directory if it exists
+                if (user && user.user_folder) {
+                    const fs = require('fs');
+                    const path = require('path');
+                    const userDir = path.join(__dirname, 'uploads', user.user_folder);
+                    
+                    try {
+                        if (fs.existsSync(userDir)) {
+                            // Remove all files in the directory first
+                            const files = fs.readdirSync(userDir);
+                            files.forEach(file => {
+                                const filePath = path.join(userDir, file);
+                                fs.unlinkSync(filePath);
+                            });
+                            // Remove the directory itself
+                            fs.rmdirSync(userDir);
+                            console.log(`✓ Deleted user directory: ${userDir}`);
+                        }
+                    } catch (dirErr) {
+                        console.error(`Error deleting user directory: ${dirErr.message}`);
+                        // Continue anyway - user is deleted from DB
+                    }
+                }
+                
+                callback(null);
+            });
+        });
     }
 
     updatePassword(id, newPassword, callback) {
